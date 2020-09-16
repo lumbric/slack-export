@@ -24,41 +24,39 @@ def getHistory(pageableObject, channelId, pageSize = 100):
     lastTimestamp = None
 
     while(True):
-        try:
-            if isinstance(pageableObject, Conversations):
-                response = pageableObject.history(
-                    channel=channelId,
-                    latest=lastTimestamp,
-                    oldest=0,
-                    limit=pageSize
-                ).body
-            else:
-                response = pageableObject.history(
-                    channel = channelId,
-                    latest    = lastTimestamp,
-                    oldest    = 0,
-                    count     = pageSize
-                ).body
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 429:
-                retryInSeconds = int(e.response.headers['Retry-After'])
-                print(u"Rate limit hit. Retrying in {0} second{1}.".format(retryInSeconds, "s" if retryInSeconds > 1 else ""))
-                sleep(retryInSeconds)
+        cumulativeRetryInSeconds = 2
+        while cumulativeRetryInSeconds <= 100:
+            batchError = None
+            retryInSeconds = 0
+            try:
                 if isinstance(pageableObject, Conversations):
                     response = pageableObject.history(
-                        channel=channelId,
-                        latest=lastTimestamp,
-                        oldest=0,
-                        limit=pageSize
+                        channel = channelId,
+                        latest = lastTimestamp,
+                        oldest = 0,
+                        limit = pageSize
                     ).body
                 else:
                     response = pageableObject.history(
-                        channel=channelId,
-                        latest=lastTimestamp,
-                        oldest=0,
-                        count=pageSize
+                        channel = channelId,
+                        latest = lastTimestamp,
+                        oldest = 0,
+                        count = pageSize
                     ).body
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 429:
+                    batchError = "rate limit hit"
+                    retryInSeconds = int(e.response.headers['Retry-After'])
+            except Exception as e:
+                batchError = "exception: {0}".format(type(e).__name__)
+                retryInSeconds = cumulativeRetryInSeconds
+                cumulativeRetryInSeconds = cumulativeRetryInSeconds * 1.1
 
+            if batchError == None:
+                break
+
+            print("Error fetching history: {0}. Retrying in {1} second(s)".format(batchError, retryInSeconds))
+            sleep(retryInSeconds)
 
         messages.extend(response['messages'])
 
