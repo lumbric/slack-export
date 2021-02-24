@@ -11,6 +11,64 @@ from datetime import datetime
 from pick import pick
 from time import sleep
 
+# Obtains all replies for a given channel id + a starting timestamp
+# Duplicates the logic in getHistory
+def getReplies(channelId, timestamp, pageSize=100):
+    conversationObject = slack.conversations
+    messages = []
+    lastTimestamp = None
+
+    while True:
+        try:
+            response = conversationObject.replies(
+                channel=channelId,
+                ts=timestamp,
+                latest=lastTimestamp,
+                oldest=0,
+                limit=pageSize,
+            ).body
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:
+                retryInSeconds = int(e.response.headers["Retry-After"])
+                print(
+                    u"Rate limit hit. Retrying in {0} second{1}.".format(
+                        retryInSeconds, "s" if retryInSeconds > 1 else ""
+                    )
+                )
+                sleep(retryInSeconds)
+
+                response = conversationObject.replies(
+                    channel=channelId,
+                    ts=timestamp,
+                    latest=lastTimestamp,
+                    oldest=0,
+                    limit=pageSize,
+                ).body
+
+        messages.extend(response["messages"])
+
+        if response["has_more"] == True:
+            sys.stdout.write(".")
+            sys.stdout.flush()
+            lastTimestamp = messages[-1]["ts"]  # -1 means last element in a list
+            sleep(1)  # Respect the Slack API rate limit
+        else:
+            break
+
+    if lastTimestamp != None:
+        print("")
+
+    messages.sort(key=lambda message: message["ts"])
+
+    # Obtaining replies also gives us the first message in the the thread
+    # (which we don't want) -- after sorting, our first message with the be the
+    # first in the list of all messages, so we remove the head of the list
+    assert messages[0]["ts"] == timestamp, "unexpected start of thread"
+    messages = messages[1:]
+
+    return messages
+
+
 # fetches the complete message history for a channel/group/im
 #
 # pageableObject could be:
@@ -61,6 +119,11 @@ def getHistory(pageableObject, channelId, pageSize = 100):
 
 
         messages.extend(response['messages'])
+
+        # Grab all replies
+        for message in response["messages"]:
+            if "thread_ts" in message:
+                messages.extend(getReplies(channelId, message["thread_ts"], pageSize))
 
         if (response['has_more'] == True):
             sys.stdout.write(".")
